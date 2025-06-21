@@ -50,13 +50,35 @@ const Voter = sequelize.define('Voter', {
   }
 });
 
+// Define FakeNews Model
+const FakeNews = sequelize.define('FakeNews', {
+  headline: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  body: {
+    type: DataTypes.TEXT,
+    allowNull: false
+  },
+  sentiment: {
+    type: DataTypes.ENUM('good', 'bad'),
+    allowNull: false
+  }
+});
+
 // Set up associations
 Candidate.hasMany(Voter, { foreignKey: 'votedCandidateId' });
 Voter.belongsTo(Candidate, { foreignKey: 'votedCandidateId' });
 
+Voter.hasMany(FakeNews, { foreignKey: 'VoterCNP' });
+FakeNews.belongsTo(Voter, { foreignKey: 'VoterCNP' });
+
+Candidate.hasMany(FakeNews, { foreignKey: 'CandidateId' });
+FakeNews.belongsTo(Candidate, { foreignKey: 'CandidateId' });
+
 // Function to initialize DB and seed data if necessary
 const initializeDb = async () => {
-  await sequelize.sync();
+  await sequelize.sync({ alter: true });
 
   // Check if candidates table is empty
   const count = await Candidate.count();
@@ -71,4 +93,4 @@ const initializeDb = async () => {
   }
 };
 
-module.exports = { sequelize, Candidate, Voter, initializeDb }; 
+module.exports = { sequelize, Candidate, Voter, FakeNews, initializeDb }; 
