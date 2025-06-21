@@ -2,8 +2,8 @@ const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
-const { Worker } = require('worker_threads');
-const path = require('path');
+const { sequelize, initializeDb, Candidate, Voter } = require('./database');
+const { Op } = require('sequelize');
 
 const app = express();
 app.use(cors());
@@ -18,116 +18,130 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-let candidates = [
-  { id: 1, name: 'John Doe', party: 'Independent', description: 'John Doe is a candidate with a focus on environmental policies and economic reform.', image: 'https://media.istockphoto.com/id/511888337/ro/fotografie/presedintele-sef-mare-statea-in-spatele-biroului-cu-steagul-american.webp?s=2048x2048&w=is&k=20&c=0tsTCQVzg8uQaQVjw1uQRgEKt2ImPmWpeBd5sweXt7g=' },
-  { id: 2, name: 'Jane Smith', party: 'Green Party', description: 'Jane Smith is dedicated to promoting renewable energy and social justice.', image: 'https://media.istockphoto.com/id/1281914192/ro/fotografie/g%C3%A2ndire-om-de-afaceri-de-v%C3%A2rst%C4%83-mijlocie-cu-un-computer-laptop.webp?s=2048x2048&w=is&k=20&c=ZCXEcSS8VRuSCICeAiyd06gAazgOCmuGIJRqjFQm950=' },
-  { id: 3, name: 'Peter Jones', party: 'Progressive Alliance', description: 'Peter Jones advocates for universal healthcare and education.', image: 'https://media.istockphoto.com/id/1474283753/ro/fotografie/omul-executiv-ar%C4%83t%C3%A2nd-cu-degetul.webp?s=2048x2048&w=is&k=20&c=uQWylZ3R44iCxpxa-90un3rfxFjUNK6YAp4k08xocY4=' }
-];
-let nextId = 4;
-let generationWorker = null;
-
-const initialParties = ['Independent', 'Green Party', 'Progressive Alliance'];
-const firstNames = ['James', 'Mary', 'Robert', 'Patricia', 'John', 'Jennifer', 'Michael', 'Linda'];
-const lastNames = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis'];
-
-// WebSocket connection
-wss.on('connection', ws => {
+// WebSocket connection handling
+wss.on('connection', async (ws) => {
+  const candidates = await Candidate.findAll();
   ws.send(JSON.stringify({ type: 'candidates', data: candidates }));
 });
 
-function broadcast(data) {
-  wss.clients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(data));
-    }
-  });
+async function broadcast() {
+    const candidates = await Candidate.findAll();
+    const message = JSON.stringify({ type: 'candidates', data: candidates });
+    wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(message);
+        }
+    });
 }
 
-// API Endpoints
-app.get('/api/candidates', (req, res) => {
+// API Endpoints for Candidates
+app.get('/api/candidates', async (req, res) => {
+  const candidates = await Candidate.findAll();
   res.json(candidates);
 });
 
-app.post('/api/candidates', (req, res) => {
-  const candidateData = req.body;
-  if (!candidateData.name || !candidateData.party) {
-    return res.status(400).send('Name and party are required.');
-  }
-  const newCandidate = { id: nextId++, ...candidateData };
-  candidates.push(newCandidate);
-  broadcast({ type: 'add', data: newCandidate });
-  res.status(201).json(newCandidate);
-});
-
-app.put('/api/candidates/:id', (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  const candidateIndex = candidates.findIndex(c => c.id === id);
-  if (candidateIndex !== -1) {
-    const updatedCandidate = { ...candidates[candidateIndex], ...req.body };
-    candidates[candidateIndex] = updatedCandidate;
-    broadcast({ type: 'update', data: updatedCandidate });
-    res.json(updatedCandidate);
-  } else {
-    res.status(404).send('Candidate not found');
+app.post('/api/candidates', async (req, res) => {
+  try {
+    const newCandidate = await Candidate.create(req.body);
+    broadcast();
+    res.status(201).json(newCandidate);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
   }
 });
 
-app.delete('/api/candidates/:id', (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  const candidateIndex = candidates.findIndex(c => c.id === id);
-  if (candidateIndex !== -1) {
-    candidates.splice(candidateIndex, 1);
-    broadcast({ type: 'delete', data: id });
-    res.status(204).send();
-  } else {
-    res.status(404).send('Candidate not found');
-  }
-});
-
-// Generation control
-app.post('/api/generation/start', (req, res) => {
-  if (generationWorker) {
-    return res.status(400).send('Generation is already running.');
-  }
-
-  generationWorker = new Worker(path.resolve(__dirname, 'generation.worker.js'));
-
-  generationWorker.on('message', (newCandidateData) => {
-    const newCandidate = { id: nextId++, ...newCandidateData };
-    candidates.push(newCandidate);
-    broadcast({ type: 'add', data: newCandidate });
-  });
-
-  generationWorker.on('error', (error) => {
-    console.error('Worker error:', error);
-    res.status(500).send('Worker error');
-    generationWorker = null;
-  });
-
-  generationWorker.on('exit', (code) => {
-    if (code !== 0) {
-      console.error(`Worker stopped with exit code ${code}`);
+app.put('/api/candidates/:id', async (req, res) => {
+    try {
+        const candidate = await Candidate.findByPk(req.params.id);
+        if (candidate) {
+            await candidate.update(req.body);
+            broadcast();
+            res.json(candidate);
+        } else {
+            res.status(404).send('Candidate not found');
+        }
+    } catch (error) {
+        res.status(400).json({ error: error.message });
     }
-    generationWorker = null;
-  });
-
-  generationWorker.postMessage('start');
-  res.status(200).send('Generation started.');
 });
 
-app.post('/api/generation/stop', (req, res) => {
-  if (!generationWorker) {
-    return res.status(400).send('Generation is not running.');
+app.delete('/api/candidates/:id', async (req, res) => {
+    try {
+        const candidate = await Candidate.findByPk(req.params.id);
+        if (candidate) {
+            await candidate.destroy();
+            broadcast();
+            res.status(204).send();
+        } else {
+            res.status(404).send('Candidate not found');
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// API Endpoints for Voters
+app.post('/api/voters/register', async (req, res) => {
+  try {
+    const { CNP, name } = req.body;
+    if (!CNP || !name) {
+      return res.status(400).json({ error: 'CNP and name are required.' });
+    }
+    const newVoter = await Voter.create({ CNP, name });
+    res.status(201).json(newVoter);
+  } catch (error) {
+    res.status(400).json({ error: 'This CNP is already registered.' });
   }
-  generationWorker.postMessage('stop');
-  generationWorker.terminate().then(() => {
-    generationWorker = null;
-    res.status(200).send('Generation stopped.');
-  }).catch(err => {
-      console.error("Failed to terminate worker", err);
-      res.status(500).send("Failed to stop generation");
-  });
+});
+
+app.post('/api/voters/login', async (req, res) => {
+    try {
+        const { CNP } = req.body;
+        const voter = await Voter.findByPk(CNP);
+        if (voter) {
+            res.json({ success: true, voter });
+        } else {
+            res.status(401).json({ success: false, error: 'Voter not found.' });
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// API Endpoint for Voting
+app.post('/api/vote', async (req, res) => {
+    try {
+        const { CNP, candidateId } = req.body;
+        const voter = await Voter.findByPk(CNP);
+        if (!voter) {
+            return res.status(404).json({ error: 'Voter not found.' });
+        }
+        if (voter.votedCandidateId) {
+            return res.status(403).json({ error: 'This voter has already voted.' });
+        }
+        const candidate = await Candidate.findByPk(candidateId);
+        if (!candidate) {
+            return res.status(404).json({ error: 'Candidate not found.' });
+        }
+        
+        // Update voter and candidate in a transaction
+        await sequelize.transaction(async (t) => {
+            voter.votedCandidateId = candidateId;
+            await voter.save({ transaction: t });
+            
+            candidate.votes += 1;
+            await candidate.save({ transaction: t });
+        });
+        
+        broadcast(); // Notify all clients of the vote update
+        res.status(200).json({ success: true, message: 'Vote cast successfully.' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
 const PORT = process.env.PORT || 3001;
-server.listen(PORT, () => console.log(`Server listening on port ${PORT}`)); 
+
+initializeDb().then(() => {
+  server.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
+}); 
