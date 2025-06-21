@@ -1,3 +1,5 @@
+const { parentPort } = require('worker_threads');
+
 let intervalId = null;
 
 const initialParties = ['Independent', 'Green Party', 'Progressive Alliance'];
@@ -13,17 +15,17 @@ function generateRandomCandidate() {
     description: `A new candidate from the ${party}.`,
     image: 'https://via.placeholder.com/150',
   };
-  postMessage(newCandidate);
+  parentPort.postMessage(newCandidate);
 }
 
-self.onmessage = function(e) {
-  if (e.data === 'start') {
+parentPort.on('message', (msg) => {
+  if (msg === 'start') {
     if (intervalId) return;
     intervalId = setInterval(generateRandomCandidate, 100);
-  } else if (e.data === 'stop') {
+  } else if (msg === 'stop') {
     if (intervalId) {
       clearInterval(intervalId);
       intervalId = null;
     }
   }
-}; 
+}); 

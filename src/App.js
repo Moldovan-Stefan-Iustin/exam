@@ -1,86 +1,78 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import './App.css';
 import CandidateList from './components/CandidateList';
 import AddCandidate from './components/AddCandidate';
 import Statistics from './components/Statistics';
 
-const initialCandidates = [
-  {
-    id: 1,
-    name: 'John Doe',
-    party: 'Independent',
-    description: 'John Doe is a candidate with a focus on environmental policies and economic reform.',
-    image: 'https://media.istockphoto.com/id/511888337/ro/fotografie/presedintele-sef-mare-statea-in-spatele-biroului-cu-steagul-american.webp?s=2048x2048&w=is&k=20&c=0tsTCQVzg8uQaQVjw1uQRgEKt2ImPmWpeBd5sweXt7g='
-  },
-  {
-    id: 2,
-    name: 'Jane Smith',
-    party: 'Green Party',
-    description: 'Jane Smith is dedicated to promoting renewable energy and social justice.',
-    image: 'https://media.istockphoto.com/id/1281914192/ro/fotografie/g%C3%A2ndire-om-de-afaceri-de-v%C3%A2rst%C4%83-mijlocie-cu-un-computer-laptop.webp?s=2048x2048&w=is&k=20&c=ZCXEcSS8VRuSCICeAiyd06gAazgOCmuGIJRqjFQm950='
-  },
-  {
-    id: 3,
-    name: 'Peter Jones',
-    party: 'Progressive Alliance',
-    description: 'Peter Jones advocates for universal healthcare and education.',
-    image: 'https://media.istockphoto.com/id/1474283753/ro/fotografie/omul-executiv-ar%C4%83t%C3%A2nd-cu-degetul.webp?s=2048x2048&w=is&k=20&c=uQWylZ3R44iCxpxa-90un3rfxFjUNK6YAp4k08xocY4='
-  }
-];
-
-const initialParties = ['Independent', 'Green Party', 'Progressive Alliance'];
-const firstNames = ['James', 'Mary', 'Robert', 'Patricia', 'John', 'Jennifer', 'Michael', 'Linda'];
-const lastNames = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis'];
+const API_URL = 'http://localhost:3001/api';
+const WS_URL = 'ws://localhost:3001';
 
 function App() {
-  const [candidates, setCandidates] = useState(initialCandidates);
+  const [candidates, setCandidates] = useState([]);
   const [isGenerating, setIsGenerating] = useState(false);
-  const lastId = useRef(Math.max(...initialCandidates.map(c => c.id)));
-  const workerRef = useRef(null);
 
   useEffect(() => {
-    workerRef.current = new Worker('/generation.worker.js');
-    workerRef.current.onmessage = (event) => {
-      const newCandidate = event.data;
-      addCandidate(newCandidate);
+    // Fetch initial candidates
+    fetch(`${API_URL}/candidates`)
+      .then(res => res.json())
+      .then(data => setCandidates(data));
+
+    // Setup WebSocket
+    const ws = new WebSocket(WS_URL);
+    ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      switch (message.type) {
+        case 'candidates':
+          setCandidates(message.data);
+          break;
+        case 'add':
+          setCandidates(prev => [...prev, message.data]);
+          break;
+        case 'update':
+          setCandidates(prev => prev.map(c => c.id === message.data.id ? message.data : c));
+          break;
+        case 'delete':
+          setCandidates(prev => prev.filter(c => c.id !== message.data));
+          break;
+        default:
+          break;
+      }
     };
 
     return () => {
-      workerRef.current.terminate();
+      ws.close();
     };
   }, []);
 
-  useEffect(() => {
-    if (!workerRef.current) return;
-
-    if (isGenerating) {
-      workerRef.current.postMessage('start');
-    } else {
-      workerRef.current.postMessage('stop');
-    }
-  }, [isGenerating]);
-
-  const addCandidate = (candidate) => {
-    lastId.current += 1;
-    const newCandidate = { id: lastId.current, ...candidate };
-    setCandidates((prev) => [...prev, newCandidate]);
+  const addCandidate = async (candidate) => {
+    await fetch(`${API_URL}/candidates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(candidate),
+    });
   };
 
-  const deleteCandidate = (id) => {
-    setCandidates(candidates.filter((candidate) => candidate.id !== id));
+  const deleteCandidate = async (id) => {
+    await fetch(`${API_URL}/candidates/${id}`, { method: 'DELETE' });
   };
 
-  const updateCandidate = (id, updatedCandidate) => {
-    setCandidates(
-      candidates.map((candidate) =>
-        candidate.id === id ? { ...candidate, ...updatedCandidate } : candidate
-      )
-    );
+  const updateCandidate = async (id, updatedCandidate) => {
+    await fetch(`${API_URL}/candidates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedCandidate),
+    });
+  };
+
+  const toggleGeneration = async () => {
+    const endpoint = isGenerating ? 'stop' : 'start';
+    await fetch(`${API_URL}/generation/${endpoint}`, { method: 'POST' });
+    setIsGenerating(!isGenerating);
   };
 
   return (
     <div className="App">
-      <button onClick={() => setIsGenerating(!isGenerating)}>
+      <button onClick={toggleGeneration}>
         {isGenerating ? 'Stop Generating' : 'Start Generating'}
       </button>
       <Statistics candidates={candidates} />
